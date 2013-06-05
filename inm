@@ -1,0 +1,286 @@
+#!/bin/bash
+#
+# Icinga Notification Manager
+# Description:
+# This script was build to prevent nightly callouts for somehow "flapping" services.
+# "somehow" because some of our plattforms do have "selfhealing" outages and there
+# is no reason to callout an admin at nighttime if the service is up again after a
+# couple of minutes.
+
+#### please edit settings below
+
+# Here I am
+IPATH=/data/icinga/etc/scripts
+INM=${IPATH}/inm
+
+# Here is my Icinga CMD file
+ICMD=/data/icinga/var/rw/icinga.cmd
+
+# we will log into this file
+LFILE=/data/icinga/var/inm.log
+
+# CHM is the value of current hour and minutes (eg. 0649 is 6:49am)
+CHM=$(date +%H%M)
+
+#SMS server settings moved to config file
+. ${IPATH}/sms.config
+#SMSSERVER=xxxx.xxx.xx
+#SMSSENDER=xxxxx
+#SMSIP=xxx.xxx.xxx.xxx
+#SMSPORT=xxxxx
+#SMSUSER=xxx
+#SMSPW=xxxxxxxxxxxx
+
+##### end settings
+
+# AWT is the admin wakeup time in hours and minutes (eg. 730 is 7:30am)
+if [ -n $ICINGA__CONTACTINMAWT ]; then
+        AWT=$ICINGA__CONTACTINMAWT
+else
+        AWT=730
+fi
+
+# ASB is the admin sleep buffer in minutes 
+if [ -n $ICINGA__CONTACTINMASB ]; then 
+        ASB=$ICINGA__CONTACTINMASB
+else
+        ASB=10
+fi
+
+# AIS admin is sleeping?
+AIS=0
+
+# send comments to icinga
+SCMD=0
+
+# recheck?
+if [ -z $RECK ] ;then
+        RECK=0
+else
+	RECK=1
+fi
+
+# NTYPE is this a HOST or SERVICE notification?
+if [ -z $ICINGA_SERVICESTATEID ] ;then
+        NTYPE=HOST
+        IID=$ICINGA_HOSTNOTIFICATIONID
+else
+        NTYPE=SERVICE
+        IID=$ICINGA_SERVICENOTIFICATIONID
+fi
+
+
+EMSG="$(date) ERROR [$IID] $ICINGA_CONTACTNAME - "
+IMSG="$(date) INFO  [$IID] $ICINGA_CONTACTNAME - "
+
+# Function usage
+usage() {
+        echo "Usage: $0 [SMSOUTPUTFORMAT]"
+        exit 1
+}
+
+if [ "$NTYPE" = "HOST" ]; then
+	echo "$IMSG HOST: $ICINGA_HOSTNAME got $ICINGA_NOTIFICATIONTYPE $ICINGA_HOSTSTATE recheck $RECK" >> $LFILE
+	env >> /var/tmp/ihostenv.txt
+elif [ "$NTYPE" = "SERVICE" ]; then
+	echo "$IMSG SERVICE: $ICINGA_SERVICEDESC HOST: $ICINGA_HOSTNAME got $ICINGA_NOTIFICATIONTYPE $ICINGA_SERVICESTATE recheck $RECK" >> $LFILE
+	env >> /var/tmp/iserviceenv.txt
+else
+	echo "$EMSG ntype wrong" >> $LFILE
+fi
+
+# Function to check if the HOST or SERVICE is still in critical state (NEB module mk_livestatus needed)
+do_recheck() {
+if [ "$NTYPE" = "HOST" ]; then
+	RECHECK_RESULT=$(echo -e "GET hosts\nFilter: host_name = $ICINGA_HOSTNAME\nColumns: state" | unixcat /data/icinga/var/rw/live)
+	echo "$IMSG ntpye is HOST with recheck result: $RECHECK_RESULT" >> $LFILE
+elif [ "$NTYPE" = "SERVICE" ]; then
+	RECHECK_RESULT=$(echo -e "GET services\nFilter: host_name = $ICINGA_HOSTNAME\nFilter: description = $ICINGA_SERVICEDESC\nColumns: state" | unixcat /data/icinga/var/rw/live)
+	echo "$IMSG  ntpye is SERVICE with recheck result: $RECHECK_RESULT" >> $LFILE
+
+else
+	echo "$EMSG ntype is not set to HOST or SERVICE" >> $LFILE
+	exit 1
+fi
+if [ "$RECHECK_RESULT" = "" ]; then
+	echo "$EMSG the recheck result is empty" >> $LFILE
+	exit 1
+fi
+}
+
+# Function to schedule a recheck
+do_schedule_recheck() {
+echo "$IMSG  adding AT job to queue i with $ASB minutes delay" >> $LFILE
+export RECK=1
+echo "$INM" | at -q i now +$ASB minutes
+CMD=$(atq)
+echo "$IMSG  atq output: $CMD" >> $LFILE
+if [ "$NTYPE" = "HOST" ] && [ $SCMD -eq 1 ]; then
+	echo "[$(date +%s)] ADD_HOST_COMMENT;$ICINGA_HOSTNAME;0;inm;ALARM QUEUED for $ICINGA_CONTACTNAME state: $ICINGA_HOSTSTATE" > $ICMD
+elif [ "$NTYPE" = "SERVICE" ] && [ $SCMD -eq 1 ]; then
+	echo "[$(date +%s)] ADD_SVC_COMMENT;$ICINGA_HOSTNAME;$ICINGA_SERVICEDESC;0;inm;ALARM QUEUED for $ICINGA_CONTACTNAME state: $ICINGA_SERVICESTATE" > $ICMD
+else
+	return 3
+fi
+}
+
+# Funktion to check if custom macro _INM is 0 or 1
+do_check_inm() {
+if [ "$NTYPE" = "HOST" ]; then
+	CHECK_INM_RESULT=$(echo -e "GET hosts\nFilter: host_name = $ICINGA_HOSTNAME\nColumns: custom_variables" | unixcat /data/icinga/var/rw/live | awk -F\| '{print $2}')
+elif [ "$NTYPE" = "SERVICE" ]; then
+	CHECK_INM_RESULT=$(echo -e "GET services\nFilter: host_name = $ICINGA_HOSTNAME\nFilter: description = $ICINGA_SERVICEDESC\nColumns: custom_variables" | unixcat /data/icinga/var/rw/live | awk -F\| '{print $2}')
+else
+	CHECK_INM_RESULT=""
+fi
+if [ "$CHECK_INM_RESULT" = "0" ]; then
+	return 0
+elif [ "$CHECK_INM_RESULT" = "1" ]; then
+	return 1
+else
+	return 3
+fi
+}
+
+
+
+# Function to send a notification
+do_notify() {
+NT="$(date '+%d-%m-%Y %H:%M:%S')"
+if [ "$ICINGA__CONTACTINMOKS" != "" ] && ( [ "$ICINGA_NOTIFICATIONTYPE" = "RECOVERY" -o "$ICINGA_NOTIFICATIONTYPE" = "CUSTOM" ] );then
+	SMSSENDER=$ICINGA__CONTACTINMOKS
+elif [ "$ICINGA__CONTACTINMPRS" != "" ] && [ "$ICINGA_NOTIFICATIONTYPE" = "PROBLEM" ];then
+	SMSSENDER=$ICINGA__CONTACTINMPRS
+else
+	SMSSENDER=Icinga
+fi
+if [ "$NTYPE" = "HOST" ]; then
+	if [ -z $ICINGA_HOSTACKCOMMENT ]; then
+		NDATAS="$ICINGA_NOTIFICATIONTYPE $ICINGA_HOSTSTATE $ICINGA_HOSTNAME%0A%0AALARM: $ICINGA_SHORTDATETIME%0ASMS:   $NT%0A%0AHOST: $ICINGA_HOSTNAME%0AIP: $ICINGA_HOSTADDRESS%0A%0A---%0A%0AOUTPUT: $ICINGA_HOSTOUTPUT%0A%0AUNHANDLED HOSTS DOWN: $ICINGA_TOTALHOSTSDOWNUNHANDLED"
+	else
+		NDATAS="$ICINGA_NOTIFICATIONTYPE $ICINGA_HOSTSTATE $ICINGA_HOSTNAME%0A%0AACKCOMMENT: $ICINGA_HOSTACKCOMMENT%0A%0AALARM: $ICINGA_SHORTDATETIME%0ASMS    :   $NT%0A%0AHOST: $ICINGA_HOSTNAME%0AIP: $ICINGA_HOSTADDRESS%0A%0A---%0A%0AOUTPUT: $ICINGA_HOSTOUTPUT%0A%0AUNHANDLED HOSTS     DOWN: $ICINGA_TOTALHOSTSDOWNUNHANDLED"
+	fi
+	echo "$IMSG  NDATAS: ${NDATAS// /+}" >> $LFILE
+	echo "[$(date +%s)] CHANGE_CUSTOM_HOST_VAR;$ICINGA_HOSTNAME;INM;0" > $ICMD
+        echo "$IMSG  setting INM variable of $ICINGA_HOSTNAME to 0" >> $LFILE
+elif [ "$NTYPE" = "SERVICE" ]; then
+	if [ -z $ICINGA_SERVICEACKCOMMENT ]; then
+		NDATAS="$ICINGA_NOTIFICATIONTYPE $ICINGA_SERVICESTATE $ICINGA_HOSTNAME%0A%0AALARM: $ICINGA_SHORTDATETIME%0ASMS:   $NT%0A%0AHOST: $ICINGA_HOSTNAME%0AIP: $ICINGA_HOSTADDRESS%0A%0ASERVICE: $ICINGA_SERVICEDESC%0A%0AOUTPUT: $ICINGA_SERVICEOUTPUT%0A%0ACMD: $ICINGA_SERVICECHECKCOMMAND%0A%0AUNHANDLED CRITICAL SERVICES: $ICINGA_TOTALSERVICESCRITICALUNHANDLED"
+	else
+		NDATAS="$ICINGA_NOTIFICATIONTYPE $ICINGA_SERVICESTATE $ICINGA_HOSTNAME%0A%0AACKCOMMENT: $ICINGA_SERVICEACKCOMMENT%0A%0AALARM: $ICINGA_SHORTDATETIME%0ASMS:   $NT%0A%0AHOST: $ICINGA_HOSTNAME%0AIP: $ICINGA_HOSTADDRESS%0A%0ASERVICE: $ICINGA_SERVICEDESC%0A%0AOUTPUT: $ICINGA_SERVICEOUTPUT%0A%0ACMD: $ICINGA_SERVICECHECKCOMMAND%0A%0AUNHANDLED CRITICAL SERVICES: $ICINGA_TOTALSERVICESCRITICALUNHANDLED"
+	fi
+	echo "$IMSG  NDATAS: ${NDATAS// /+}" >> $LFILE
+	echo "[$(date +%s)] CHANGE_CUSTOM_SVC_VAR;$ICINGA_HOSTNAME;$ICINGA_SERVICEDESC;INM;0" > $ICMD
+        echo "$IMSG  setting INM variable of $ICINGA_HOSTNAME $ICINGA_SERVICEDESC to 0" >> $LFILE
+else
+	echo "$EMSG again the ntype might be set wrong" >> $LFILE
+	exit 1
+fi
+echo "$IMSG  starting curl to send sms from sernder $SMSSENDER" >> $LFILE
+if [ -z $ICINGA_CONTACTPAGER ]; then
+	echo "$EMSG no admin pager number was found - can not send any sms..." >> $LFILE
+else
+	CMD=$(/usr/bin/curl --fail "http://$SMSIP:$SMSPORT/cgi-bin/sendsms?username=$SMSUSER&password=$SMSPW&from=$SMSSENDER&to=$ICINGA_CONTACTPAGER&text=${NDATAS// /+}")
+	RT=$?
+	if [ $RT -gt 0 ]; then
+		echo "$EMSG curl return code was $RT OUTPUT: $CMD" >> $LFILE
+		echo "$IMSG  falling back to sms via email" >> $LFILE
+		do_emailsms
+		return 1
+	else
+		echo "$IMSG  curl return code was $RT OUTPUT: $CMD" >> $LFILE
+		if [ "$NTYPE" = "HOST" ] && [ $SCMD -eq 1 ]; then
+        		echo "[$(date +%s)] ADD_HOST_COMMENT;$ICINGA_HOSTNAME;0;inm;ALARM SENT for $ICINGA_CONTACTNAME state: $ICINGA_HOSTSTATE pager: $ICINGA_CONTACTPAGER" > $ICMD
+			return 0
+		elif [ "$NTYPE" = "SERVICE" ] && [ $SCMD -eq 1 ]; then
+        		echo "[$(date +%s)] ADD_SVC_COMMENT;$ICINGA_HOSTNAME;$ICINGA_SERVICEDESC;0;inm;ALARM SENT $ICINGA_CONTACTNAME state: $ICINGA_SERVICESTATE pager: $ICINGA_CONTACTPAGER" > $ICMD
+			return 0
+		else
+        		return 0
+		fi
+	fi
+fi
+}
+
+do_emailsms() {
+echo "$IMSG  sending fallback sms via email" >> $LFILE
+if [ "$NTYPE" = "HOST" ]; then
+	/usr/bin/printf "%b" "$ICINGA_NOTIFICATIONTYPE $ICINGA_HOSTSTATE $ICINGA_HOSTNAME\n\nALARM: $ICINGA_SHORTDATETIME\nSMS: $NT\n\nHOST: $ICINGA_HOSTNAME\nIP: $ICINGA_HOSTADDRESS\n\n---\n\nOUTPUT: $ICINGA_HOSTOUTPUT" /usr/bin/mailx -s "$ICINGA_NOTIFICATIONTYPE $ICINGA_HOSTSTATE $ICINGA_HOSTNAME" $ICINGA_CONTACTPAGER@$SMSSERVER
+	RT=$?
+elif [ "$NTYPE" = "SERVICE" ]; then
+	/usr/bin/printf "%b" "$ICINGA_NOTIFICATIONTYPE $ICINGA_SERVICESTATE $ICINGA_HOSTNAME\n\nALARM: $ICINGA_SHORTDATETIME\nSMS: $NT\n\nHOST: $ICINGA_HOSTNAME\nIP: $ICINGA_HOSTADDRESS\n\nSERVICE: $ICINGA_SERVICEDESC\n\nOUTPUT: $ICINGA_SERVICEOUTPUT\n\nCMD: $ICINGA_SERVICECHECKCOMMAND" | /usr/bin/mailx -s "$ICINGA_NOTIFICATIONTYPE $ICINGA_SERVICESTATE $ICINGA_HOSTNAME" $ICINGA_CONTACTPAGER@$SMSSERVER
+	RT=$?
+else
+	RT=1
+	echo "$EMSG and ups - again the ntype ($NTYPE) might be set wrong" >> $LFILE
+fi
+if [ $RT -eq 0 ]; then
+	echo "$IMSG  email to sms gatway $SMSSERVER was sent successful" >> $LFILE
+else
+	echo "$EMSG email to sms gatway $SMSSERVER failed" >> $LFILE
+fi
+}
+
+
+if [ $CHM -lt $AWT ]; then
+	AIS=1
+	if [ $RECK -eq 0 ]; then
+		if [ "$ICINGA_NOTIFICATIONTYPE" = "PROBLEM" -o "$ICINGA_NOTIFICATIONTYPE" = "CUSTOM" ]; then
+			echo "$IMSG  recheck is 0 - alarm will be rechecked in $ASB minutes" >> $LFILE
+			do_schedule_recheck
+			if [ "$NTYPE" = "HOST" ]; then
+				echo "[$(date +%s)] CHANGE_CUSTOM_HOST_VAR;$ICINGA_HOSTNAME;INM;1" > $ICMD
+				echo "$IMSG  setting INM variable of $ICINGA_HOSTNAME to 1" >> $LFILE
+			elif [ "$NTYPE" = "SERVICE" ]; then
+				echo "[$(date +%s)] CHANGE_CUSTOM_SVC_VAR;$ICINGA_HOSTNAME;$ICINGA_SERVICEDESC;INM;1" > $ICMD
+				echo "$IMSG  setting INM variable of $ICINGA_HOSTNAME $ICINGA_SERVICEDESC to 1" >> $LFILE
+			fi
+		elif [ "$ICINGA_NOTIFICATIONTYPE" = "RECOVERY" ]; then
+			echo "$IMSG  recheck is 0 and this is a $ICINGA_NOTIFICATIONTYPE msg" >> $LFILE
+			do_check_inm
+			RT=$?
+			if [ $RT -eq 0 ]; then
+				echo "$IMSG  IMG variable is 0 so lets send this $ICINGA_NOTIFICATIONTYPE msg" >> $LFILE
+				do_notify
+			elif [ $RT -eq 1 ]; then
+				if [ "$NTYPE" = "HOST" ]; then
+					echo "$IMSG  $ICINGA_HOSTNAME IMG variable is $RT so lets drop this $ICINGA_NOTIFICATIONTYPE msg" >> $LFILE
+				elif [ "$NTYPE" = "SERVICE" ]; then
+					echo "$IMSG  $ICINGA_HOSTNAME $ICINGA_SERVICEDESC IMG variable is $RT so lets drop this $ICINGA_NOTIFICATIONTYPE msg" >> $LFILE
+				else
+					echo "$EMSG ntype was wrong I guess..." >> $LFILE
+				fi
+				exit 1
+			else
+				echo "$EMSG IMG variable is $RT - woooops..." >> $LFILE
+			fi
+		fi
+	elif [ $RECK -gt 0 ]; then
+		echo "$IMSG  recheck is greater than 0 and a sms will be sent now if service/host is not OK" >> $LFILE
+		do_recheck
+		if [ $RECHECK_RESULT -gt 0 ]; then
+			do_notify
+		else
+			if [ "$NTYPE" = "HOST" ]; then
+				echo "$IMSG  $ICINGA_HOSTNAME  seems to be OK now - alarm is dropped" >> $LFILE
+				if [ $SCMD -eq 1 ]; then
+			        	echo "[$(date +%s)] ADD_HOST_COMMENT;$ICINGA_HOSTNAME;0;inm;ALARM DROPPED for $ICINGA_CONTACTNAME state: $ICINGA_HOSTSTATE" > $ICMD
+				fi
+			elif [ "$NTYPE" = "SERVICE" ]; then
+				echo "$IMSG  $ICINGA_HOSTNAME $ICINGA_SERVICEDESC seems to be OK now - alarm is dropped" >> $LFILE
+				if [ $SCMD -eq 1 ]; then
+       					echo "[$(date +%s)] ADD_SVC_COMMENT;$ICINGA_HOSTNAME;$ICINGA_SERVICEDESC;0;inm;ALARM DROPPED for $ICINGA_CONTACTNAME state: $ICINGA_SERVICESTATE" > $ICMD
+				fi
+			else
+        			return 0
+			fi
+		fi
+	else
+		echo "$IMSG alarm type is $ICINGA_NOTIFICATIONTYPE so we do not sms out anything" >> $LFILE
+		exit 1
+	fi
+else
+	AIS=0
+	do_notify
+fi
+#EOF
