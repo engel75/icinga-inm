@@ -6,12 +6,12 @@ Shell script to allow Icinga/Nagios notification with delay at night time.
 Requirements
 ============
 
-OS:
+OS
 --
 * bash
 
-Icinga/Nagios:
---------------
+Icinga/Nagios
+-------------
 * macros enabled  (enable_environment_macros=1)
 * mk_livestatus
 * all services and hosts need custom macro:
@@ -22,6 +22,17 @@ Icinga/Nagios:
  _INMPRS <some sender name> (name of the SMS sender if notification type is PROBLEM)
  _INMASB <some number> (Admin sleep buffer time in minutes)
  _INMAWT <some number> (Admin awake time, eg. 730 would be 07:30 am)
+
+SMS server
+----------
+* Kannel
+
+
+Configuration
+==============
+
+* SMS server configuratuion is stored in ./sms.config
+* Please edit default settings on top of the script
 
 License and Author
 ==================
