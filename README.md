@@ -9,10 +9,12 @@ Requirements
 OS
 --
 * bash
+* atd
+* awk
 
 Icinga/Nagios
 -------------
-* macros enabled  (enable_environment_macros=1)
+* macros disabled  (enable_environment_macros=0)
 * mk_livestatus
 * all services and hosts need custom macro:
  _INM 0
@@ -33,6 +35,57 @@ Configuration
 
 * SMS server configuratuion is stored in ./sms.config
 * Please edit default settings on top of the script
+* The Icinga command would look like this (host and service):
+
+define command{
+        command_name    notify-inm
+        command_line    \
+                ICINGA__CONTACTINMASB='$_CONTACTINMASB$' \
+                ICINGA__CONTACTINMAWT='$_CONTACTINMAWT$' \
+                ICINGA__CONTACTINMOKS='$_CONTACTINMOKS$' \
+                ICINGA__CONTACTINMPRS='$_CONTACTINMPRS$' \
+                ICINGA_CONTACTNAME='$CONTACTNAME$' \
+                ICINGA_CONTACTPAGER='$CONTACTPAGER$' \
+                ICINGA_HOSTADDRESS='$HOSTADDRESS$' \
+                ICINGA_HOSTNAME='$HOSTNAME$' \
+                ICINGA_HOSTNOTIFICATIONID='$HOSTNOTIFICATIONID$' \
+                ICINGA_HOSTOUTPUT='$HOSTOUTPUT$' \
+                ICINGA_HOSTSTATE='$HOSTSTATE$' \
+                ICINGA_NOTIFICATIONCOMMENT='$NOTIFICATIONCOMMENT$' \
+                ICINGA_NOTIFICATIONTYPE='$NOTIFICATIONTYPE$' \
+                ICINGA_SERVICECHECKCOMMAND='$SERVICECHECKCOMMAND$' \
+                ICINGA_SERVICEDESC='$SERVICEDESC$' \
+                ICINGA_SERVICENOTIFICATIONID='$SERVICENOTIFICATIONID$' \
+                ICINGA_SERVICEOUTPUT='$SERVICEOUTPUT$' \
+                ICINGA_SERVICESTATE='$SERVICESTATE$' \
+                ICINGA_SERVICESTATEID='$SERVICESTATEID$' \
+                ICINGA_SHORTDATETIME='$SHORTDATETIME$' \
+                ICINGA_TOTALHOSTSDOWNUNHANDLED='$TOTALHOSTSDOWNUNHANDLED$' \
+                ICINGA_TOTALSERVICESCRITICALUNHANDLED='$TOTALSERVICESCRITICALUNHANDLED$' \
+                /data/icinga/etc/scripts/inm
+        }
+
+* A contact would look like this:
+
+define contact {
+	contact_name		unix-fen
+	use			unix-contact
+	host_notifications_enabled      1
+        service_notifications_enabled   1
+	alias			Florian Engelmann
+	email			florian.engelmann@somecompany.some
+	pager			076xxxxx61
+	_INMOKS			ewok
+	_INMPRS			ewalarm
+	_INMASB			10
+	_INMAWT			700
+        service_notification_options    c,r
+        host_notification_options       d,u,r
+	host_notification_commands	notify-inm
+	service_notification_commands	notify-inm
+	}
+
+
 
 License and Author
 ==================

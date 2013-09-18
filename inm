@@ -7,23 +7,42 @@
 # is no reason to callout an admin at nighttime if the service is up again after a
 # couple of minutes.
 
-#### please edit settings below
+###########################################################
+#### START settings (please edit settings below)
+###########################################################
 
-# Here I am
-IPATH=/data/icinga/etc/scripts
-INM=${IPATH}/inm
+# Icinga path
+IPATH=/data/icinga
+
+# INM path
+INM=${IPATH}/etc/scripts/inm
 
 # Here is my Icinga CMD file
-ICMD=/data/icinga/var/rw/icinga.cmd
+ICMD=${IPATH}/var/rw/icinga.cmd
+
+# Socket mk_livestatus
+ILIV=${IPATH}/var/rw/live
+
+# unixcat (mk_livestatus)
+UXCAT=$(which unixcat)
+
+# awk 
+AWK=$(which awk)
+
+# at
+AT=$(which at)
+
+# atq
+ATQ=$(which atq)
 
 # we will log into this file
-LFILE=/data/icinga/var/inm.log
+LFILE=${IPATH}/var/inm.log
 
 # CHM is the value of current hour and minutes (eg. 0649 is 6:49am)
 CHM=$(date +%H%M)
 
-#SMS server settings moved to config file
-. ${IPATH}/sms.config
+# SMS server settings sourced from config file
+. ${IPATH}/etc/scripts/sms.config
 #SMSSERVER=xxxx.xxx.xx
 #SMSSENDER=xxxxx
 #SMSIP=xxx.xxx.xxx.xxx
@@ -31,7 +50,9 @@ CHM=$(date +%H%M)
 #SMSUSER=xxx
 #SMSPW=xxxxxxxxxxxx
 
-##### end settings
+###########################################################
+##### END settings
+###########################################################
 
 # AWT is the admin wakeup time in hours and minutes (eg. 730 is 7:30am)
 if [ -n $ICINGA__CONTACTINMAWT ]; then
@@ -85,10 +106,8 @@ usage() {
 
 if [ "$NTYPE" = "HOST" ]; then
 	echo "$IMSG HOST: $ICINGA_HOSTNAME got $ICINGA_NOTIFICATIONTYPE $ICINGA_HOSTSTATE recheck $RECK" >> $LFILE
-	env >> /var/tmp/ihostenv.txt
 elif [ "$NTYPE" = "SERVICE" ]; then
 	echo "$IMSG SERVICE: $ICINGA_SERVICEDESC HOST: $ICINGA_HOSTNAME got $ICINGA_NOTIFICATIONTYPE $ICINGA_SERVICESTATE recheck $RECK" >> $LFILE
-	env >> /var/tmp/iserviceenv.txt
 else
 	echo "$EMSG ntype wrong" >> $LFILE
 fi
@@ -96,10 +115,10 @@ fi
 # Function to check if the HOST or SERVICE is still in critical state (NEB module mk_livestatus needed)
 do_recheck() {
 if [ "$NTYPE" = "HOST" ]; then
-	RECHECK_RESULT=$(echo -e "GET hosts\nFilter: host_name = $ICINGA_HOSTNAME\nColumns: state" | unixcat /data/icinga/var/rw/live)
+	RECHECK_RESULT=$(echo -e "GET hosts\nFilter: host_name = $ICINGA_HOSTNAME\nColumns: state" | $UXCAT $ILIV) 
 	echo "$IMSG ntpye is HOST with recheck result: $RECHECK_RESULT" >> $LFILE
 elif [ "$NTYPE" = "SERVICE" ]; then
-	RECHECK_RESULT=$(echo -e "GET services\nFilter: host_name = $ICINGA_HOSTNAME\nFilter: description = $ICINGA_SERVICEDESC\nColumns: state" | unixcat /data/icinga/var/rw/live)
+	RECHECK_RESULT=$(echo -e "GET services\nFilter: host_name = $ICINGA_HOSTNAME\nFilter: description = $ICINGA_SERVICEDESC\nColumns: state" | $UXCAT $ILIV)
 	echo "$IMSG  ntpye is SERVICE with recheck result: $RECHECK_RESULT" >> $LFILE
 
 else
@@ -116,8 +135,8 @@ fi
 do_schedule_recheck() {
 echo "$IMSG  adding AT job to queue i with $ASB minutes delay" >> $LFILE
 export RECK=1
-echo "$INM" | at -q i now +$ASB minutes
-CMD=$(atq)
+echo "$INM" | $AT -q i now +$ASB minutes
+CMD=$($ATQ)
 echo "$IMSG  atq output: $CMD" >> $LFILE
 if [ "$NTYPE" = "HOST" ] && [ $SCMD -eq 1 ]; then
 	echo "[$(date +%s)] ADD_HOST_COMMENT;$ICINGA_HOSTNAME;0;inm;ALARM QUEUED for $ICINGA_CONTACTNAME state: $ICINGA_HOSTSTATE" > $ICMD
@@ -131,9 +150,9 @@ fi
 # Funktion to check if custom macro _INM is 0 or 1
 do_check_inm() {
 if [ "$NTYPE" = "HOST" ]; then
-	CHECK_INM_RESULT=$(echo -e "GET hosts\nFilter: host_name = $ICINGA_HOSTNAME\nColumns: custom_variables" | unixcat /data/icinga/var/rw/live | awk -F\| '{print $2}')
+	CHECK_INM_RESULT=$(echo -e "GET hosts\nFilter: host_name = $ICINGA_HOSTNAME\nColumns: custom_variables" | $UXCAT $ILIV | $AWK -F\| '{print $2}')
 elif [ "$NTYPE" = "SERVICE" ]; then
-	CHECK_INM_RESULT=$(echo -e "GET services\nFilter: host_name = $ICINGA_HOSTNAME\nFilter: description = $ICINGA_SERVICEDESC\nColumns: custom_variables" | unixcat /data/icinga/var/rw/live | awk -F\| '{print $2}')
+	CHECK_INM_RESULT=$(echo -e "GET services\nFilter: host_name = $ICINGA_HOSTNAME\nFilter: description = $ICINGA_SERVICEDESC\nColumns: custom_variables" | $UXCAT $ILIV | $AWK -F\| '{print $2}')
 else
 	CHECK_INM_RESULT=""
 fi
