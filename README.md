@@ -37,8 +37,8 @@ Configuration
 * Please edit default settings on top of the script
 * The Icinga command would look like this (host and service):
 
-`
-define command{
+
+  define command{
         command_name    notify-inm
         command_line    \
                 ICINGA__CONTACTINMASB='$_CONTACTINMASB$' \
@@ -64,12 +64,11 @@ define command{
                 ICINGA_TOTALHOSTSDOWNUNHANDLED='$TOTALHOSTSDOWNUNHANDLED$' \
                 ICINGA_TOTALSERVICESCRITICALUNHANDLED='$TOTALSERVICESCRITICALUNHANDLED$' \
                 /data/icinga/etc/scripts/inm
-        }`
+        }
 
 * A contact would look like this:
 
-`
-define contact {
+  define contact {
 	contact_name		unix-fen
 	use			unix-contact
 	host_notifications_enabled      1
@@ -85,7 +84,7 @@ define contact {
         host_notification_options       d,u,r
 	host_notification_commands	notify-inm
 	service_notification_commands	notify-inm
-	}`
+	}
 
 
 
