@@ -97,7 +97,7 @@ define contact {
 License and Author
 ==================
 
-Author:: Florian Engelmann (<engelmann@d-g-c.de>)
+Author:: F. Engelmann
 
 Copyright:: 2013 
 
