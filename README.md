@@ -14,16 +14,20 @@ OS
 
 Icinga/Nagios
 -------------
-* macros disabled  (enable_environment_macros=0)
+* Environment macros disabled (enable_environment_macros=0)
 * mk_livestatus
 * all services and hosts need custom macro:
+<pre>
  _INM 0
+</pre>
 * all contacts need a pager number
 * a contact can have the following custom macros:
+<pre>
  _INMOKS <some sender name> (name of the SMS sender if notification type is OK)
  _INMPRS <some sender name> (name of the SMS sender if notification type is PROBLEM)
  _INMASB <some number> (Admin sleep buffer time in minutes)
  _INMAWT <some number> (Admin awake time, eg. 730 would be 07:30 am)
+</pre>
 
 SMS server
 ----------
@@ -33,7 +37,7 @@ SMS server
 Configuration
 ==============
 
-* SMS server configuratuion is stored in ./sms.config
+* SMS server configuratuion is stored in `./sms.config`
 * Please edit default settings on top of the script
 * The Icinga command would look like this (host and service):
 
@@ -93,7 +97,7 @@ define contact {
 License and Author
 ==================
 
-Author:: Florian Engelmann (<engelmann@d-g-c.de>)
+Author:: F. Engelmann
 
 Copyright:: 2013 
 
